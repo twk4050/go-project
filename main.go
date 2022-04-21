@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
 
+	"github.com/mattn/go-sqlite3"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -33,8 +35,19 @@ const binanceFuturesFile = "binance_USDTFutures.txt"
 
 const dbName = "foo.db"
 
+type entrypoint struct {
+	lib  string
+	proc string
+}
+
+var libNames = []entrypoint{
+	{"libgo-sqlite3-extension-functions.so", "sqlite3_extension_init"},
+	{"libgo-sqlite3-extension-functions.dylib", "sqlite3_extension_init"},
+	{"libsqlitefunctions.dll", "sqlite3_extension_init"}, // renamed to custom dll file
+}
+
 // go will invoke init() before main()
-// rename init() -> other name so i can invoke/comment function easily from main()
+// rename init() -> other name to invoke/comment function easily from main()
 func initDB() {
 	/*
 		- to get data from FTX and Binance and store to database -
@@ -65,71 +78,63 @@ func initDB() {
 	initializeDataInFtx(db)
 
 	/* binance */
-	// getAllBinanceUSDTPairs() // creates a .txt file with all binance USDT futures
+	getAllBinanceUSDTPairs() // creates a .txt file with all binance USDT futures
 
-	// // create table 'binance'
-	// fmt.Printf("creating table %s... \n", tableName_binance)
-	// createTableBinanceInDB(db)
+	/* create table 'binance' */
+	fmt.Printf("creating table %s... \n", tableName_binance)
+	createTableBinanceInDB(db)
 
-	// // insert 153 symbol * n candlesticks into table 'binance'
-	// // binance docs Kline interval, m h d w M, 1m 3m 5m 15m 30m 1h 2h 4h 6h 8h 12h 1d 3d 1w 1M
-	// fmt.Println("inserting data into binance...")
-	// initializeDataInBinance(db)
-	// testQuery(db)
+	/* insert 153 symbol * n candlesticks into table 'binance'
+	binance docs Kline interval, m h d w M, 1m 3m 5m 15m 30m 1h 2h 4h 6h 8h 12h 1d 3d 1w 1M */
+	fmt.Println("inserting data into binance...")
+	initializeDataInBinance(db)
 }
-
-// type entrypoint struct {
-// 	lib  string
-// 	proc string
-// }
-
-// var libNames = []entrypoint{
-// 	{"libgo-sqlite3-extension-functions.so", "sqlite3_extension_init"},
-// 	{"libgo-sqlite3-extension-functions.dylib", "sqlite3_extension_init"},
-// 	{"libsqlitefunctions.dll", "sqlite3_extension_init"},
-// }
-
-// sql.Register("sqlite3-extension-functions",
-// &sqlite3.SQLiteDriver{
-// 	ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-// 		for _, v := range libNames {
-// 			if err := conn.LoadExtension(v.lib, v.proc); err == nil {
-// 				return nil
-// 			}
-// 		}
-// 		return errors.New("libgo-sqlite3-extension-functions not found")
-// 	},
-// })
-// db, err := sql.Open("sqlite3-extension-functions", dbName)
 
 // display data
 func main() {
-
+	sql.Register("sqlite3-extension-functions",
+		&sqlite3.SQLiteDriver{
+			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+				for _, v := range libNames {
+					if err := conn.LoadExtension(v.lib, v.proc); err == nil {
+						return nil
+					}
+				}
+				return errors.New("libgo-sqlite3-extension-functions not found")
+			},
+		})
 	/* initialize database with data */
 	// initDB()
 
 	/* start a connection */
-	db, err := sql.Open("sqlite3", dbName)
+	db, err := sql.Open("sqlite3-extension-functions", dbName)
 	checkErr(err)
 	defer db.Close()
 
 	/* display all rows / top10 coins */
-	fmt.Println("----- top 10 volume FTX -----")
-	displayTop10VolumeInFtx(db)
+	// fmt.Println("----- top 10 volume FTX -----")
+	// displayTop10VolumeInFtx(db)
 
-	fmt.Println("----- biggest gainz 1h -----")
-	displayTop1hChangeInFtx(db, 10, "DESC")
+	// fmt.Println("----- biggest gainz 1h -----")
+	// displayTop1hChangeInFtx(db, 10, "DESC")
 
-	fmt.Println("----- biggest loss 1h -----")
-	displayTop1hChangeInFtx(db, 10, "ASC")
+	// fmt.Println("----- biggest loss 1h -----")
+	// displayTop1hChangeInFtx(db, 10, "ASC")
 
 	/* binance random tests */
-	// testExtension(db)
+	testQueryWithExtension(db)
 
 }
 
-func testExtension(db *sql.DB) {
+func testQueryWithExtension(db *sql.DB) {
+	// SELECT MAX(a.openTime) as latest_candle, a.name, a.volume, b.sum_volume
+	// FROM binance a
+	// INNER JOIN (SELECT id,sum(volume) as sum_volume,name FROM binance WHERE (id,openTime) NOT IN (SELECT id, max(openTime) FROM binance GROUP BY name) GROUP BY name) as b on a.name = b.name
+	// GROUP BY a.name
+	// ORDER BY a.volume DESC
+	// LIMIT 5;
 
+	// HAVING latest_candle=a.openTime AND a.volume > b.sum_volume;
 	reverseSQL := `SELECT reverse("hello world");`
 	rows, err := db.Query(reverseSQL)
 	checkErr(err)
