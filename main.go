@@ -13,6 +13,7 @@ import (
 
 	"github.com/mattn/go-sqlite3"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/robfig/cron/v3"
 )
 
 /*
@@ -32,7 +33,7 @@ const tableName_binance = "binance"
 const MILLION = 1_000_000
 
 const binanceFuturesFile = "binance_USDTFutures.txt"
-
+const binance_baseurl = `https://fapi.binance.com/fapi/v1/klines?symbol=%s&interval=15m&limit=3` // TODO: used in insertRowsToBinance(),format query params {symbol} {interval} {limit}
 const dbName = "foo.db"
 
 type entrypoint struct {
@@ -43,7 +44,7 @@ type entrypoint struct {
 var libNames = []entrypoint{
 	{"libgo-sqlite3-extension-functions.so", "sqlite3_extension_init"},
 	{"libgo-sqlite3-extension-functions.dylib", "sqlite3_extension_init"},
-	{"libsqlitefunctions.dll", "sqlite3_extension_init"}, // renamed to custom dll file
+	{"./sql-extensions/libsqlitefunctions.dll", "sqlite3_extension_init"}, // renamed to custom dll file
 }
 
 // go will invoke init() before main()
@@ -122,65 +123,48 @@ func main() {
 	// displayTop1hChangeInFtx(db, 10, "ASC")
 
 	/* binance random tests */
-	testQueryWithExtension(db)
+	// testQueryWithExtension(db)
 
+	c := cron.New()
+	c.AddFunc("@every 10s",
+		func() {
+			displayTop10VolumeInFtx(db)
+			displayTop1hChangeInFtx(db, 10, "DESC")
+		})
+	c.Start()
+	select {}
 }
 
 func testQueryWithExtension(db *sql.DB) {
-	// SELECT MAX(a.openTime) as latest_candle, a.name, a.volume, b.sum_volume
-	// FROM binance a
-	// INNER JOIN (SELECT id,sum(volume) as sum_volume,name FROM binance WHERE (id,openTime) NOT IN (SELECT id, max(openTime) FROM binance GROUP BY name) GROUP BY name) as b on a.name = b.name
-	// GROUP BY a.name
-	// ORDER BY a.volume DESC
-	// LIMIT 5;
-
-	// HAVING latest_candle=a.openTime AND a.volume > b.sum_volume;
-	reverseSQL := `SELECT reverse("hello world");`
-	rows, err := db.Query(reverseSQL)
-	checkErr(err)
-
-	for rows.Next() {
-		var msg string
-		rows.Scan(&msg)
-		fmt.Println(msg)
-	}
-}
-
-func testQuery(db *sql.DB) {
-	testSQL := `SELECT MAX(a.openTime) as latest_candle, a.name, a.volume, b.sum_volume
+	testSQL := `SELECT MAX(a.openTime) as latest_candle, a.name, a.volume, b.stdev_volume
 	FROM binance a
-	INNER JOIN (SELECT id,sum(volume) as sum_volume,name FROM binance WHERE (id,openTime) NOT IN (SELECT id, max(openTime) FROM binance GROUP BY name) GROUP BY name) as b on a.name = b.name
+	INNER JOIN (SELECT id,stdev(volume) as stdev_volume,name FROM binance 
+		WHERE (id,openTime) NOT IN (SELECT id, max(openTime) FROM binance GROUP BY name) 
+		GROUP BY name) as b on a.name = b.name
 	GROUP BY a.name
-	ORDER BY a.volume DESC 
-	LIMIT 5;`
+	HAVING latest_candle=a.openTime AND a.volume > 3 * b.stdev_volume;`
+	// 	ORDER BY a.volume DESC;
+	// LIMIT 5;`
+	// HAVING latest_candle=a.openTime AND a.volume > 2 * b.stdev_volume;
 
 	rows, err := db.Query(testSQL)
 	checkErr(err)
-
 	for rows.Next() {
 		var openTime int
 		var name string
 		var volume float64
-		var sum_volume float64
-		rows.Scan(&openTime, &name, &volume, &sum_volume)
-		fmt.Printf("%s %f %f\n", name, volume, sum_volume)
+		var stdev_volume float64
+		rows.Scan(&openTime, &name, &volume, &stdev_volume)
+		fmt.Printf("%s %f %f\n", name, volume, stdev_volume)
 	}
-}
-
-func displayAllRowsInBinance(db *sql.DB) {
-	selectAllSQL := `SELECT *
-	FROM %s;`
-
-	sql := fmt.Sprintf(selectAllSQL, tableName_binance)
-	rows, err := db.Query(sql)
-	checkErr(err)
-
-	for rows.Next() {
-
-		// rows.Scan() // TODO
-
-	}
-
+	// reverseSQL := `SELECT reverse("hello world");`
+	// rows, err := db.Query(reverseSQL)
+	// checkErr(err)
+	// for rows.Next() {
+	// 	var msg string
+	// 	rows.Scan(&msg)
+	// 	fmt.Println(msg)
+	// }
 }
 
 func insertRowsIntoBinance(db *sql.DB, name string, c Candlesticks) {
@@ -211,7 +195,7 @@ func initializeDataInBinance(db *sql.DB) {
 	scanner := bufio.NewScanner(f)
 	defer f.Close()
 
-	const binance_baseurl = `https://fapi.binance.com/fapi/v1/klines?symbol=%s&interval=15m&limit=3`
+	// const binance_baseurl = `https://fapi.binance.com/fapi/v1/klines?symbol=%s&interval=15m&limit=3`
 	for scanner.Scan() {
 		symbol := scanner.Text()
 		formatted_endpoint := fmt.Sprintf(binance_baseurl, symbol)
