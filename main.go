@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/mattn/go-sqlite3"
 	_ "github.com/mattn/go-sqlite3"
@@ -21,10 +22,13 @@ import (
 	- Database > Table > Rows
 	- always prepare(SQL) -> execute
 	- databytes unmarshal into corresponding struct type with `json` struct tags
-	- sql accepts all datatype during insertion (able to insert string into REAL) (sqlite auto convert if able)
+	- sqlite accepts all datatype during insertion (able to insert string into REAL) (sqlite auto convert if able)
 	- different volume meaning
 	-- ftx: volumeUsd24h -> (sql) ftx.volume
 	-- binance: volume vs QuoteAssetVolume , quoteAssetVolume -> (sql) binance.volume (response type string auto converted to REAL in sql)
+	https://binance-docs.github.io/apidocs/futures/en/#change-log
+	- insert 153 symbol * n candlesticks into table 'binance'
+	binance docs Kline interval, m h d w M, 1m 3m 5m 15m 30m 1h 2h 4h 6h 8h 12h 1d 3d 1w 1M
 */
 
 const ftx_endpoint = "https://ftx.com/api/futures"
@@ -33,7 +37,7 @@ const tableName_binance = "binance"
 const MILLION = 1_000_000
 
 const binanceFuturesFile = "binance_USDTFutures.txt"
-const binance_baseurl = `https://fapi.binance.com/fapi/v1/klines?symbol=%s&interval=15m&limit=3` // TODO: used in insertRowsToBinance(),format query params {symbol} {interval} {limit}
+const binance_baseurl = `https://fapi.binance.com/fapi/v1/klines?symbol=%s&interval=15m&limit=99` // TODO: used in insertRowsToBinance(),format query params {symbol} {interval} {limit}
 const dbName = "foo.db"
 
 type entrypoint struct {
@@ -49,50 +53,23 @@ var libNames = []entrypoint{
 
 // go will invoke init() before main()
 // rename init() -> other name to invoke/comment function easily from main()
-func initDB() {
-	/*
-		- to get data from FTX and Binance and store to database -
-		1) create "foo.db" if does not exist
-		2) connection to db
-		3) create 2 tables ftx and binance
-		4) insert data
-	*/
-	fmt.Println("initializing database with data...")
-
+func initRequiredFiles() {
 	// create db
 	os.Remove(dbName) // removes current database
 	fmt.Printf("creating %s if does not exist...\n", dbName)
 	createFileIfDoesNotExist(dbName)
 
-	// connect to db
-	db, err := sql.Open("sqlite3", dbName)
-	checkErr(err)
-	defer db.Close()
-
-	/* ftx */
-	// create table 'ftx'
-	fmt.Printf("creating table %s... \n", tableName_ftx)
-	createTableFtxInDB(db)
-
-	// insert perpetual futures into table 'ftx'
-	fmt.Println("inserting data into ftx...")
-	initializeDataInFtx(db)
-
-	/* binance */
-	getAllBinanceUSDTPairs() // creates a .txt file with all binance USDT futures
-
-	/* create table 'binance' */
-	fmt.Printf("creating table %s... \n", tableName_binance)
-	createTableBinanceInDB(db)
-
-	/* insert 153 symbol * n candlesticks into table 'binance'
-	binance docs Kline interval, m h d w M, 1m 3m 5m 15m 30m 1h 2h 4h 6h 8h 12h 1d 3d 1w 1M */
-	fmt.Println("inserting data into binance...")
-	initializeDataInBinance(db)
+	// creates a .txt file with all binance USDT futures
+	getAllBinanceUSDTPairs()
 }
 
 // display data
 func main() {
+	fmt.Print("starting program ")
+	printCurrentTime()
+	// initRequiredFiles()
+
+	/* extend driver */
 	sql.Register("sqlite3-extension-functions",
 		&sqlite3.SQLiteDriver{
 			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
@@ -104,67 +81,101 @@ func main() {
 				return errors.New("libgo-sqlite3-extension-functions not found")
 			},
 		})
-	/* initialize database with data */
-	// initDB()
 
 	/* start a connection */
 	db, err := sql.Open("sqlite3-extension-functions", dbName)
 	checkErr(err)
 	defer db.Close()
 
-	/* display all rows / top10 coins */
-	// fmt.Println("----- top 10 volume FTX -----")
-	// displayTop10VolumeInFtx(db)
+	/* cron job */
+	c := cron.New(cron.WithParser(cron.NewParser(
+		cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
+	)))
 
-	// fmt.Println("----- biggest gainz 1h -----")
-	// displayTop1hChangeInFtx(db, 10, "DESC")
+	// c.AddFunc("0-59/10 * * * * *",
+	// 	func() {
+	// 		printCurrentTime()
+	// 		dropTableFtxInDB(db)
+	// 		createTableFtxInDB(db)
+	// 		initializeDataInFtx(db)
+	// 		fmt.Println("----- top 10 volume FTX -----")
+	// 		displayTop10VolumeInFtx(db)
+	// 		fmt.Println("----- biggest gainz 1h -----")
+	// 		displayTop1hChangeInFtx(db, 10, "DESC")
+	// 		fmt.Println("----- biggest loss 1h -----")
+	// 		displayTop1hChangeInFtx(db, 10, "ASC")
+	// 	})
 
-	// fmt.Println("----- biggest loss 1h -----")
-	// displayTop1hChangeInFtx(db, 10, "ASC")
-
-	/* binance random tests */
-	// testQueryWithExtension(db)
-
-	c := cron.New()
-	c.AddFunc("@every 10s",
-		func() {
-			displayTop10VolumeInFtx(db)
-			displayTop1hChangeInFtx(db, 10, "DESC")
-		})
+	c.AddFunc("0 13 * * * *", func() {
+		printCurrentTime()
+		// dropTableBinanceInDB(db)
+		// createTableBinanceInDB(db)
+		// initializeDataInBinance(db)
+		// fmt.Println("----- testing binance query -----")
+		// testQueryWithExtension(db)
+		// testQuery2SumOf24_1H(db)
+	})
 	c.Start()
+	displayTopVolumeInBinance(db)
+
 	select {}
 }
 
-func testQueryWithExtension(db *sql.DB) {
-	testSQL := `SELECT MAX(a.openTime) as latest_candle, a.name, a.volume, b.stdev_volume
-	FROM binance a
-	INNER JOIN (SELECT id,stdev(volume) as stdev_volume,name FROM binance 
-		WHERE (id,openTime) NOT IN (SELECT id, max(openTime) FROM binance GROUP BY name) 
-		GROUP BY name) as b on a.name = b.name
-	GROUP BY a.name
-	HAVING latest_candle=a.openTime AND a.volume > 3 * b.stdev_volume;`
-	// 	ORDER BY a.volume DESC;
-	// LIMIT 5;`
-	// HAVING latest_candle=a.openTime AND a.volume > 2 * b.stdev_volume;
+func printCurrentTime() {
+	h, m, s := time.Now().Clock()
+	fmt.Printf("%d:%d:%d \n", h, m, s)
+}
+
+func displayTopVolumeInBinance(db *sql.DB) {
+
+	testSQL := `
+	SELECT name, sum(volume) as sum_volume from binance
+	WHERE datetime(round(openTime/1000), 'unixepoch') > datetime('now', '-1 day')
+	GROUP BY name
+	ORDER BY sum(volume) DESC;
+	`
 
 	rows, err := db.Query(testSQL)
 	checkErr(err)
+	fmt.Printf("%12s %12s \n", "name", "sum_volume_in_M")
+
+	for rows.Next() {
+		var name string
+		var sum_volume float64
+		rows.Scan(&name, &sum_volume)
+		fmt.Printf("%12s %12.4f \n", name, sum_volume/MILLION)
+	}
+}
+func testQueryWithExtension(db *sql.DB) {
+	testSQL := `
+	SELECT MAX(a.openTime) as latest_c, a.name, a.volume as latest_c_vol, b.sd_1
+	FROM binance a
+	   INNER JOIN (SELECT id, name, sum(volume) as sum_vol, count(volume) as count, 
+					avg(volume) as avg_vol, 
+					stdev(volume) as stdev_vol, 
+					(avg(volume) + 1*stdev(volume)) as sd_1, 
+					(avg(volume) + 2*stdev(volume)) as sd_2
+					FROM binance
+					WHERE (id, name, openTime) NOT IN (
+						SELECT id, name, max(openTime) FROM binance
+						GROUP BY name)
+					GROUP BY name) as b on a.name = b.name
+	GROUP BY a.name
+	HAVING a.volume > b.sd_1
+	ORDER BY a.volume DESC
+	LIMIT 10;`
+
+	rows, err := db.Query(testSQL)
+	checkErr(err)
+	fmt.Printf("%10s %20s %20s \n", "name", "latestcandlevolume", "68%-CI-1*sd+mean")
 	for rows.Next() {
 		var openTime int
 		var name string
-		var volume float64
-		var stdev_volume float64
-		rows.Scan(&openTime, &name, &volume, &stdev_volume)
-		fmt.Printf("%s %f %f\n", name, volume, stdev_volume)
+		var latest_c_volume float64
+		var sd1 float64
+		rows.Scan(&openTime, &name, &latest_c_volume, &sd1)
+		fmt.Printf("%10s %20f %20f\n", name, latest_c_volume, sd1)
 	}
-	// reverseSQL := `SELECT reverse("hello world");`
-	// rows, err := db.Query(reverseSQL)
-	// checkErr(err)
-	// for rows.Next() {
-	// 	var msg string
-	// 	rows.Scan(&msg)
-	// 	fmt.Println(msg)
-	// }
 }
 
 func insertRowsIntoBinance(db *sql.DB, name string, c Candlesticks) {
@@ -210,6 +221,16 @@ func initializeDataInBinance(db *sql.DB) {
 			insertRowsIntoBinance(db, symbol, c)
 		}
 	}
+}
+
+// can format into general dropTable
+func dropTableBinanceInDB(db *sql.DB) {
+	dropTableSQL := `DROP TABLE IF EXISTS %s;`
+	sql := fmt.Sprintf(dropTableSQL, tableName_binance)
+
+	statement, err := db.Prepare(sql)
+	checkErr(err)
+	statement.Exec()
 }
 
 func createTableBinanceInDB(db *sql.DB) {
@@ -277,6 +298,7 @@ func displayTop1hChangeInFtx(db *sql.DB, rowsToDisplay int, order string) {
 
 	rows, err := db.Query(sql)
 	checkErr(err)
+	fmt.Printf("%12s %10s %12s \n", "name", "last", "%change")
 	for rows.Next() {
 		var name string
 		var last float64
@@ -300,6 +322,7 @@ func displayTop10VolumeInFtx(db *sql.DB) {
 	rows, err := db.Query(sql)
 	checkErr(err)
 
+	fmt.Printf("%12s %12s \n", "name", "volume in M")
 	for rows.Next() {
 		var name string
 		var volumeUsd24h float64
@@ -360,6 +383,15 @@ func initializeDataInFtx(db *sql.DB) {
 			insertRowsIntoFtx(db, coin)
 		}
 	}
+}
+
+func dropTableFtxInDB(db *sql.DB) {
+	dropTableSQL := `DROP TABLE IF EXISTS %s;`
+	sql := fmt.Sprintf(dropTableSQL, tableName_ftx)
+
+	statement, err := db.Prepare(sql)
+	checkErr(err)
+	statement.Exec()
 }
 
 func createTableFtxInDB(db *sql.DB) {
