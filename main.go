@@ -37,7 +37,6 @@ const tableName_binance = "binance"
 const MILLION = 1_000_000
 
 const binanceFuturesFile = "binance_USDTFutures.txt"
-const binance_baseurl = `https://fapi.binance.com/fapi/v1/klines?symbol=%s&interval=15m&limit=99` // TODO: used in insertRowsToBinance(),format query params {symbol} {interval} {limit}
 const dbName = "foo.db"
 
 type entrypoint struct {
@@ -92,6 +91,26 @@ func main() {
 		cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
 	)))
 
+	// number of symbols = n, k = number of candles to retrieve, X = interval 3m,15m,1h,1d ...
+	// binance, createTable and insert n * k rows of X interval
+
+	interval := "15m"
+	printCurrentTime()
+	fmt.Println("initializing data from binance")
+	dropTableBinanceInDB(db)
+	createTableBinanceInDB(db)
+
+	initializeDataInBinance(db, interval, 99) //*** skips last candle becos not closed yet // 153 symbols * 20 candles took 20sec
+	displayTop24HVolumeInBinance(db)          // not accurate becos missing out 1 candle
+
+	// every X-25sec interval, insert new X-interval candle
+	c.AddFunc("1 0-59/15 * * * *", func() {
+		printCurrentTime()
+		initializeDataInBinance(db, interval, 1) //
+		displayTop24HVolumeInBinance(db)
+	})
+
+	/* ftx, every X interval, create table and insert value
 	// c.AddFunc("0-59/10 * * * * *",
 	// 	func() {
 	// 		printCurrentTime()
@@ -105,18 +124,8 @@ func main() {
 	// 		fmt.Println("----- biggest loss 1h -----")
 	// 		displayTop1hChangeInFtx(db, 10, "ASC")
 	// 	})
-
-	c.AddFunc("0 13 * * * *", func() {
-		printCurrentTime()
-		// dropTableBinanceInDB(db)
-		// createTableBinanceInDB(db)
-		// initializeDataInBinance(db)
-		// fmt.Println("----- testing binance query -----")
-		// testQueryWithExtension(db)
-		// testQuery2SumOf24_1H(db)
-	})
+	*/
 	c.Start()
-	displayTopVolumeInBinance(db)
 
 	select {}
 }
@@ -126,17 +135,19 @@ func printCurrentTime() {
 	fmt.Printf("%d:%d:%d \n", h, m, s)
 }
 
-func displayTopVolumeInBinance(db *sql.DB) {
+func displayTop24HVolumeInBinance(db *sql.DB) {
 
 	testSQL := `
 	SELECT name, sum(volume) as sum_volume from binance
 	WHERE datetime(round(openTime/1000), 'unixepoch') > datetime('now', '-1 day')
 	GROUP BY name
-	ORDER BY sum(volume) DESC;
+	ORDER BY sum(volume) DESC
+	LIMIT 20;
 	`
 
 	rows, err := db.Query(testSQL)
 	checkErr(err)
+	fmt.Println("----- Binance Top 20 Volume -----")
 	fmt.Printf("%12s %12s \n", "name", "sum_volume_in_M")
 
 	for rows.Next() {
@@ -146,6 +157,8 @@ func displayTopVolumeInBinance(db *sql.DB) {
 		fmt.Printf("%12s %12.4f \n", name, sum_volume/MILLION)
 	}
 }
+
+// return if within_1sd / within_2sd
 func testQueryWithExtension(db *sql.DB) {
 	testSQL := `
 	SELECT MAX(a.openTime) as latest_c, a.name, a.volume as latest_c_vol, b.sd_1
@@ -200,24 +213,31 @@ type Candlesticks [12]interface{}
 
 type KLine_Response []Candlesticks
 
-func initializeDataInBinance(db *sql.DB) {
+func initializeDataInBinance(db *sql.DB, interval string, limit int) {
+	limit = limit + 1 // this function will always discard last candle, having this makes more sense in main()
+
 	f, err := os.Open(binanceFuturesFile)
 	checkErr(err)
 	scanner := bufio.NewScanner(f)
 	defer f.Close()
 
-	// const binance_baseurl = `https://fapi.binance.com/fapi/v1/klines?symbol=%s&interval=15m&limit=3`
+	endpoint := `https://fapi.binance.com/fapi/v1/klines?symbol=%s&interval=%s&limit=%d`
 	for scanner.Scan() {
 		symbol := scanner.Text()
-		formatted_endpoint := fmt.Sprintf(binance_baseurl, symbol)
+		formatted_endpoint := fmt.Sprintf(endpoint, symbol, interval, limit)
 		dataBytes, err := httpGetUrlRequestAndIORead(formatted_endpoint)
 		checkErr(err)
 
 		var kline_response KLine_Response
 		json.Unmarshal(dataBytes, &kline_response)
 
-		// c = candlesticks , c[0] = OpenTime
-		for _, c := range kline_response {
+		// c = candlesticks
+		lastIndex := len(kline_response) - 1
+		for i, c := range kline_response {
+			// last c not closed yet not a complete candle
+			if i == lastIndex {
+				continue
+			}
 			insertRowsIntoBinance(db, symbol, c)
 		}
 	}
@@ -321,7 +341,7 @@ func displayTop10VolumeInFtx(db *sql.DB) {
 
 	rows, err := db.Query(sql)
 	checkErr(err)
-
+	fmt.Println("----- FTX Top 10 Volume -----")
 	fmt.Printf("%12s %12s \n", "name", "volume in M")
 	for rows.Next() {
 		var name string
