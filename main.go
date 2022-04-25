@@ -31,18 +31,42 @@ import (
 	binance docs Kline interval, m h d w M, 1m 3m 5m 15m 30m 1h 2h 4h 6h 8h 12h 1d 3d 1w 1M
 */
 
-const ftx_endpoint = "https://ftx.com/api/futures"
-const tableName_ftx = "ftx"
-const tableName_binance = "binance"
-const MILLION = 1_000_000
+type FTX_Response struct {
+	Success     string        `json:"success"`
+	FuturesList []FTX_Futures `json:"result"`
+}
 
-const binanceFuturesFile = "binance_USDTFutures.txt"
-const dbName = "foo.db"
+type FTX_Futures struct {
+	Name            string  `json:"name"`
+	Perpetual       bool    `json:"perpetual"`
+	Last            float64 `json:"last"`
+	Index           float64 `json:"index"`
+	Mark            float64 `json:"mark"`
+	Change1h        float64 `json:"change1h"`
+	Change24h       float64 `json:"change24h"`
+	ChangeBod       float64 `json:"changeBod"`
+	VolumeUsd24h    float64 `json:"volumeUsd24h"`
+	Volume          float64 `json:"volume"`
+	OpenInterest    float64 `json:"openInterest"`
+	OpenInterestUsd float64 `json:"openInterestUsd"`
+}
+
+type Binance_Futures_KLine_Response []Candlesticks
+type Candlesticks [12]interface{} // OpenTime, Open, High, Low, Close, Volume, CloseTime, QuoteAssetVolume, NumberOfTrades = c[0] ... c[7]
 
 type entrypoint struct {
 	lib  string
 	proc string
 }
+
+const dbName = "foo.db"
+const TABLENAME_FTX = "ftx"
+const TABLENAME_BINANCE = "binance"
+const LIST_OF_BINANCE_USDT_FUTURES_FILENAME = "binanceFutures.txt"
+
+const MILLION = 1_000_000
+
+const FTX_ENDPOINT = "https://ftx.com/api/futures"
 
 var libNames = []entrypoint{
 	{"libgo-sqlite3-extension-functions.so", "sqlite3_extension_init"},
@@ -50,19 +74,6 @@ var libNames = []entrypoint{
 	{"./sql-extensions/libsqlitefunctions.dll", "sqlite3_extension_init"}, // renamed to custom dll file
 }
 
-// go will invoke init() before main()
-// rename init() -> other name to invoke/comment function easily from main()
-func initRequiredFiles() {
-	// create db
-	os.Remove(dbName) // removes current database
-	fmt.Printf("creating %s if does not exist...\n", dbName)
-	createFileIfDoesNotExist(dbName)
-
-	// creates a .txt file with all binance USDT futures
-	getAllBinanceUSDTPairs()
-}
-
-// display data
 func main() {
 	fmt.Print("starting program ")
 	printCurrentTime()
@@ -93,11 +104,10 @@ func main() {
 
 	// number of symbols = n, k = number of candles to retrieve, X = interval 3m,15m,1h,1d ...
 	// binance, createTable and insert n * k rows of X interval
-
 	interval := "15m"
 	printCurrentTime()
 	fmt.Println("initializing data from binance")
-	dropTableBinanceInDB(db)
+	dropTableInDB(db, TABLENAME_BINANCE)
 	createTableBinanceInDB(db)
 
 	initializeDataInBinance(db, interval, 99) //*** skips last candle becos not closed yet // 153 symbols * 20 candles took 20sec
@@ -110,52 +120,23 @@ func main() {
 		displayTop24HVolumeInBinance(db)
 	})
 
-	/* ftx, every X interval, create table and insert value
-	// c.AddFunc("0-59/10 * * * * *",
-	// 	func() {
-	// 		printCurrentTime()
-	// 		dropTableFtxInDB(db)
-	// 		createTableFtxInDB(db)
-	// 		initializeDataInFtx(db)
-	// 		fmt.Println("----- top 10 volume FTX -----")
-	// 		displayTop10VolumeInFtx(db)
-	// 		fmt.Println("----- biggest gainz 1h -----")
-	// 		displayTop1hChangeInFtx(db, 10, "DESC")
-	// 		fmt.Println("----- biggest loss 1h -----")
-	// 		displayTop1hChangeInFtx(db, 10, "ASC")
-	// 	})
-	*/
+	/* ftx, every X interval, create table and insert value */
+	c.AddFunc("0 0-59/1 * * * *",
+		func() {
+			printCurrentTime()
+			dropTableInDB(db, TABLENAME_FTX)
+			createTableFtxInDB(db)
+			initializeDataInFtx(db)
+			displayTop10VolumeInFtx(db)
+			fmt.Println("----- biggest gainz 1h -----")
+			displayTop1hChangeInFtx(db, 10, "DESC")
+			fmt.Println("----- biggest loss 1h -----")
+			displayTop1hChangeInFtx(db, 10, "ASC")
+		})
+
 	c.Start()
 
 	select {}
-}
-
-func printCurrentTime() {
-	h, m, s := time.Now().Clock()
-	fmt.Printf("%d:%d:%d \n", h, m, s)
-}
-
-func displayTop24HVolumeInBinance(db *sql.DB) {
-
-	testSQL := `
-	SELECT name, sum(volume) as sum_volume from binance
-	WHERE datetime(round(openTime/1000), 'unixepoch') > datetime('now', '-1 day')
-	GROUP BY name
-	ORDER BY sum(volume) DESC
-	LIMIT 20;
-	`
-
-	rows, err := db.Query(testSQL)
-	checkErr(err)
-	fmt.Println("----- Binance Top 20 Volume -----")
-	fmt.Printf("%12s %12s \n", "name", "sum_volume_in_M")
-
-	for rows.Next() {
-		var name string
-		var sum_volume float64
-		rows.Scan(&name, &sum_volume)
-		fmt.Printf("%12s %12.4f \n", name, sum_volume/MILLION)
-	}
 }
 
 // return if within_1sd / within_2sd
@@ -191,6 +172,30 @@ func testQueryWithExtension(db *sql.DB) {
 	}
 }
 
+/* Binance helper functions below */
+func displayTop24HVolumeInBinance(db *sql.DB) {
+
+	testSQL := `
+	SELECT name, sum(volume) as sum_volume from binance
+	WHERE datetime(round(openTime/1000), 'unixepoch') > datetime('now', '-1 day')
+	GROUP BY name
+	ORDER BY sum(volume) DESC
+	LIMIT 20;
+	`
+
+	rows, err := db.Query(testSQL)
+	checkErr(err)
+	fmt.Println("----- Binance Top 20 Volume -----")
+	fmt.Printf("%12s %12s \n", "name", "sum_volume_in_M")
+
+	for rows.Next() {
+		var name string
+		var sum_volume float64
+		rows.Scan(&name, &sum_volume)
+		fmt.Printf("%12s %12.4f \n", name, sum_volume/MILLION)
+	}
+}
+
 func insertRowsIntoBinance(db *sql.DB, name string, c Candlesticks) {
 	openTime, open, high, low, close, closeTime, quoteAssetVolume := c[0], c[1], c[2], c[3], c[4], c[6], c[7]
 
@@ -198,7 +203,7 @@ func insertRowsIntoBinance(db *sql.DB, name string, c Candlesticks) {
 	(name, openTime, open, high, low, close, volume, closeTime)
 	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	;`
-	sql := fmt.Sprintf(insertSQL, tableName_binance)
+	sql := fmt.Sprintf(insertSQL, TABLENAME_BINANCE)
 
 	statement, err := db.Prepare(sql)
 	checkErr(err)
@@ -206,17 +211,10 @@ func insertRowsIntoBinance(db *sql.DB, name string, c Candlesticks) {
 	statement.Exec(name, openTime, open, high, low, close, quoteAssetVolume, closeTime)
 }
 
-type Candlesticks [12]interface{}
-
-// doesnt work "GET" request returns [ [123, "123"], [123, "123"] ] instead of k-v mappings
-// OpenTime, Open, High, Low, Close, Volume, CloseTime, QuoteAssetVolume, NumberOfTrades = c[0] ... c[7]
-
-type KLine_Response []Candlesticks
-
 func initializeDataInBinance(db *sql.DB, interval string, limit int) {
 	limit = limit + 1 // this function will always discard last candle, having this makes more sense in main()
 
-	f, err := os.Open(binanceFuturesFile)
+	f, err := os.Open(LIST_OF_BINANCE_USDT_FUTURES_FILENAME)
 	checkErr(err)
 	scanner := bufio.NewScanner(f)
 	defer f.Close()
@@ -228,7 +226,7 @@ func initializeDataInBinance(db *sql.DB, interval string, limit int) {
 		dataBytes, err := httpGetUrlRequestAndIORead(formatted_endpoint)
 		checkErr(err)
 
-		var kline_response KLine_Response
+		var kline_response Binance_Futures_KLine_Response
 		json.Unmarshal(dataBytes, &kline_response)
 
 		// c = candlesticks
@@ -243,11 +241,9 @@ func initializeDataInBinance(db *sql.DB, interval string, limit int) {
 	}
 }
 
-// can format into general dropTable
-func dropTableBinanceInDB(db *sql.DB) {
+func dropTableInDB(db *sql.DB, tableName string) {
 	dropTableSQL := `DROP TABLE IF EXISTS %s;`
-	sql := fmt.Sprintf(dropTableSQL, tableName_binance)
-
+	sql := fmt.Sprintf(dropTableSQL, tableName)
 	statement, err := db.Prepare(sql)
 	checkErr(err)
 	statement.Exec()
@@ -266,7 +262,7 @@ func createTableBinanceInDB(db *sql.DB) {
 		closeTime int
 	);`
 
-	sql := fmt.Sprintf(createTableSQL, tableName_binance)
+	sql := fmt.Sprintf(createTableSQL, TABLENAME_BINANCE)
 
 	statement, err := db.Prepare(sql)
 	checkErr(err)
@@ -275,8 +271,7 @@ func createTableBinanceInDB(db *sql.DB) {
 
 func getAllBinanceUSDTPairs() {
 	endpoint := "https://fapi.binance.com/fapi/v1/exchangeInfo"
-	fname := "binance_USDTFutures.txt"
-	f, err := os.Create(fname)
+	f, err := os.Create(LIST_OF_BINANCE_USDT_FUTURES_FILENAME)
 	if err != nil {
 		panic(err)
 	}
@@ -303,6 +298,17 @@ func getAllBinanceUSDTPairs() {
 	}
 }
 
+func initRequiredFiles() {
+	// create db
+	os.Remove(dbName) // removes current database
+	fmt.Printf("creating %s if does not exist...\n", dbName)
+	createFileIfDoesNotExist(dbName)
+
+	// creates a .txt file with all binance USDT futures
+	getAllBinanceUSDTPairs()
+}
+
+/* FTX helper functions below */
 // 2nd param - "order" either "DESC" | "ASC"
 func displayTop1hChangeInFtx(db *sql.DB, rowsToDisplay int, order string) {
 	if order != "DESC" && order != "ASC" {
@@ -314,7 +320,7 @@ func displayTop1hChangeInFtx(db *sql.DB, rowsToDisplay int, order string) {
 	LIMIT %d;
 	`
 
-	sql := fmt.Sprintf(selectTop1hGainer, tableName_ftx, order, rowsToDisplay)
+	sql := fmt.Sprintf(selectTop1hGainer, TABLENAME_FTX, order, rowsToDisplay)
 
 	rows, err := db.Query(sql)
 	checkErr(err)
@@ -337,7 +343,7 @@ func displayTop10VolumeInFtx(db *sql.DB) {
 	`
 
 	// formatted
-	sql := fmt.Sprintf(selectTop10VolumeSQL, tableName_ftx)
+	sql := fmt.Sprintf(selectTop10VolumeSQL, TABLENAME_FTX)
 
 	rows, err := db.Query(sql)
 	checkErr(err)
@@ -355,7 +361,7 @@ func displayAllRowsInFtx(db *sql.DB) {
 	selectAllSQL := `SELECT * 
 	FROM %s;
 	`
-	sql := fmt.Sprintf(selectAllSQL, tableName_ftx)
+	sql := fmt.Sprintf(selectAllSQL, TABLENAME_FTX)
 
 	rows, err := db.Query(sql)
 	checkErr(err)
@@ -383,7 +389,7 @@ func insertRowsIntoFtx(db *sql.DB, c FTX_Futures) {
 	(name, last, change1h, change24h, volume, oi)
 	VALUES (?, ?, ?, ?, ?, ?)
 	;`
-	sql := fmt.Sprintf(insertSQL, tableName_ftx)
+	sql := fmt.Sprintf(insertSQL, TABLENAME_FTX)
 
 	statement, err := db.Prepare(sql)
 	checkErr(err)
@@ -391,7 +397,7 @@ func insertRowsIntoFtx(db *sql.DB, c FTX_Futures) {
 }
 
 func initializeDataInFtx(db *sql.DB) {
-	dataBytes, err := httpGetUrlRequestAndIORead(ftx_endpoint)
+	dataBytes, err := httpGetUrlRequestAndIORead(FTX_ENDPOINT)
 	checkErr(err)
 
 	var FTX_Response FTX_Response
@@ -405,15 +411,6 @@ func initializeDataInFtx(db *sql.DB) {
 	}
 }
 
-func dropTableFtxInDB(db *sql.DB) {
-	dropTableSQL := `DROP TABLE IF EXISTS %s;`
-	sql := fmt.Sprintf(dropTableSQL, tableName_ftx)
-
-	statement, err := db.Prepare(sql)
-	checkErr(err)
-	statement.Exec()
-}
-
 func createTableFtxInDB(db *sql.DB) {
 	createTableSQL := `CREATE TABLE IF NOT EXISTS %s(
 		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
@@ -425,13 +422,14 @@ func createTableFtxInDB(db *sql.DB) {
 		oi REAL
 	);`
 
-	sql := fmt.Sprintf(createTableSQL, tableName_ftx)
+	sql := fmt.Sprintf(createTableSQL, TABLENAME_FTX)
 
 	statement, err := db.Prepare(sql)
 	checkErr(err)
 	statement.Exec()
 }
 
+// common helper functions below
 func fileExistInCWD(fname string) bool {
 	directoryList, err := os.ReadDir("./")
 	checkErr(err)
@@ -450,24 +448,10 @@ func createFileIfDoesNotExist(fname string) {
 	}
 }
 
-type FTX_Futures struct {
-	Name            string  `json:"name"`
-	Perpetual       bool    `json:"perpetual"`
-	Last            float64 `json:"last"`
-	Index           float64 `json:"index"`
-	Mark            float64 `json:"mark"`
-	Change1h        float64 `json:"change1h"`
-	Change24h       float64 `json:"change24h"`
-	ChangeBod       float64 `json:"changeBod"`
-	VolumeUsd24h    float64 `json:"volumeUsd24h"`
-	Volume          float64 `json:"volume"`
-	OpenInterest    float64 `json:"openInterest"`
-	OpenInterestUsd float64 `json:"openInterestUsd"`
-}
-
-type FTX_Response struct {
-	Success     string        `json:"success"`
-	FuturesList []FTX_Futures `json:"result"`
+// TODO: look for alternative, 'log' library?
+func printCurrentTime() {
+	h, m, s := time.Now().Clock()
+	fmt.Printf("%d:%d:%d \n", h, m, s)
 }
 
 func httpGetUrlRequestAndIORead(url string) ([]byte, error) {
@@ -486,4 +470,4 @@ func checkErr(e error) {
 	}
 }
 
-/* for helper functions read from bottom to top */
+/* read from bottom to top */
