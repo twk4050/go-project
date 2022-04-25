@@ -77,7 +77,7 @@ var libNames = []entrypoint{
 func main() {
 	fmt.Print("starting program ")
 	printCurrentTime()
-	// initRequiredFiles()
+	initRequiredFiles()
 
 	/* extend driver */
 	sql.Register("sqlite3-extension-functions",
@@ -102,23 +102,23 @@ func main() {
 		cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
 	)))
 
-	// number of symbols = n, k = number of candles to retrieve, X = interval 3m,15m,1h,1d ...
-	// binance, createTable and insert n * k rows of X interval
-	interval := "15m"
-	printCurrentTime()
-	fmt.Println("initializing data from binance")
-	dropTableInDB(db, TABLENAME_BINANCE)
-	createTableBinanceInDB(db)
+	/* number of symbols = n, k = number of candles to retrieve, X = interval 3m,15m,1h,1d ... */
+	/* binance, createTable and insert n * k rows of X interval */
+	// interval := "15m"
+	// printCurrentTime()
+	// fmt.Println("initializing data from binance")
+	// dropTableInDB(db, TABLENAME_BINANCE)
+	// createTableBinanceInDB(db)
 
-	initializeDataInBinance(db, interval, 99) //*** skips last candle becos not closed yet // 153 symbols * 20 candles took 20sec
-	displayTop24HVolumeInBinance(db)          // not accurate becos missing out 1 candle
+	// initializeDataInBinance(db, interval, 99) //*** skips last candle becos not closed yet // 153 symbols * 20 candles took 20sec
+	// displayTop24HVolumeInBinance(db)          // not accurate becos missing out 1 candle
 
-	// every X-25sec interval, insert new X-interval candle
-	c.AddFunc("1 0-59/15 * * * *", func() {
-		printCurrentTime()
-		initializeDataInBinance(db, interval, 1) //
-		displayTop24HVolumeInBinance(db)
-	})
+	// /* every X-25sec interval, insert new X-interval candle */
+	// c.AddFunc("1 0-59/15 * * * *", func() {
+	// 	printCurrentTime()
+	// 	initializeDataInBinance(db, interval, 1) //
+	// 	displayTop24HVolumeInBinance(db)
+	// })
 
 	/* ftx, every X interval, create table and insert value */
 	c.AddFunc("0 0-59/1 * * * *",
@@ -129,9 +129,13 @@ func main() {
 			initializeDataInFtx(db)
 			displayTop10VolumeInFtx(db)
 			fmt.Println("----- biggest gainz 1h -----")
-			displayTop1hChangeInFtx(db, 10, "DESC")
+			displayChangeInFtx(db, 1, 5, "DESC")
 			fmt.Println("----- biggest loss 1h -----")
-			displayTop1hChangeInFtx(db, 10, "ASC")
+			displayChangeInFtx(db, 1, 5, "ASC")
+			fmt.Println("----- biggest gainz 24h -----")
+			displayChangeInFtx(db, 24, 5, "DESC")
+			fmt.Println("----- biggest loss 24h -----")
+			displayChangeInFtx(db, 24, 5, "ASC")
 		})
 
 	c.Start()
@@ -310,27 +314,32 @@ func initRequiredFiles() {
 
 /* FTX helper functions below */
 // 2nd param - "order" either "DESC" | "ASC"
-func displayTop1hChangeInFtx(db *sql.DB, rowsToDisplay int, order string) {
+func displayChangeInFtx(db *sql.DB, change int, rowsToDisplay int, order string) {
+	if change != 1 && change != 24 {
+		panic("change needs to be either 1 or 24 for sql statement")
+	}
 	if order != "DESC" && order != "ASC" {
 		panic("order needs to be either DESC | ASC for sql statement")
 	}
-	selectTop1hGainer := `SELECT name, last, change1h
+
+	selectTopGainerSQL := `SELECT name, last, change1h, change24h
 	from %s
-	ORDER BY change1h %s
+	ORDER BY change%dh %s
 	LIMIT %d;
 	`
 
-	sql := fmt.Sprintf(selectTop1hGainer, TABLENAME_FTX, order, rowsToDisplay)
+	sql := fmt.Sprintf(selectTopGainerSQL, TABLENAME_FTX, change, order, rowsToDisplay)
 
 	rows, err := db.Query(sql)
 	checkErr(err)
-	fmt.Printf("%12s %10s %12s \n", "name", "last", "%change")
+	fmt.Printf("%12s %10s %14s%% %14s%% \n", "name", "last", "1hChange", "24hChange")
 	for rows.Next() {
 		var name string
 		var last float64
-		var change float64
-		rows.Scan(&name, &last, &change)
-		fmt.Printf("%12s %10.4f %12f%% \n", name, last, change*100)
+		var change1h float64
+		var change24h float64
+		rows.Scan(&name, &last, &change1h, &change24h)
+		fmt.Printf("%12s %10.4f %14.4f%% %14.4f%% \n", name, last, change1h*100, change24h*100)
 	}
 }
 
