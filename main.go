@@ -104,39 +104,41 @@ func main() {
 
 	/* number of symbols = n, k = number of candles to retrieve, X = interval 3m,15m,1h,1d ... */
 	/* binance, createTable and insert n * k rows of X interval */
-	// interval := "15m"
-	// printCurrentTime()
-	// fmt.Println("initializing data from binance")
-	// dropTableInDB(db, TABLENAME_BINANCE)
-	// createTableBinanceInDB(db)
+	interval := "15m"
+	func() {
+		printCurrentTime()
+		fmt.Println("initializing data from binance")
+		dropTableInDB(db, TABLENAME_BINANCE)
+		createTableBinanceInDB(db)
+		initializeDataInBinance(db, interval, 99) //*** skips last candle becos not closed yet // 153 symbols * 20 candles took 20sec
+		displayTop24HVolumeInBinance(db)          // not accurate becos missing out 1 candle
 
-	// initializeDataInBinance(db, interval, 99) //*** skips last candle becos not closed yet // 153 symbols * 20 candles took 20sec
-	// displayTop24HVolumeInBinance(db)          // not accurate becos missing out 1 candle
+	}()
 
-	// /* every X-25sec interval, insert new X-interval candle */
-	// c.AddFunc("1 0-59/15 * * * *", func() {
-	// 	printCurrentTime()
-	// 	initializeDataInBinance(db, interval, 1) //
-	// 	displayTop24HVolumeInBinance(db)
-	// })
+	/* every X interval, insert new X-interval candle */
+	c.AddFunc("0 0-59/15 * * * *", func() {
+		printCurrentTime()
+		initializeDataInBinance(db, interval, 1) //
+		displayTop24HVolumeInBinance(db)
+	})
 
 	/* ftx, every X interval, create table and insert value */
-	c.AddFunc("0 0-59/1 * * * *",
-		func() {
-			printCurrentTime()
-			dropTableInDB(db, TABLENAME_FTX)
-			createTableFtxInDB(db)
-			initializeDataInFtx(db)
-			displayTop10VolumeInFtx(db)
-			fmt.Println("----- biggest gainz 1h -----")
-			displayChangeInFtx(db, 1, 5, "DESC")
-			fmt.Println("----- biggest loss 1h -----")
-			displayChangeInFtx(db, 1, 5, "ASC")
-			fmt.Println("----- biggest gainz 24h -----")
-			displayChangeInFtx(db, 24, 5, "DESC")
-			fmt.Println("----- biggest loss 24h -----")
-			displayChangeInFtx(db, 24, 5, "ASC")
-		})
+	// c.AddFunc("0 0-59/5 * * * *",
+	// 	func() {
+	// 		printCurrentTime()
+	// 		dropTableInDB(db, TABLENAME_FTX)
+	// 		createTableFtxInDB(db)
+	// 		initializeDataInFtx(db)
+	// 		displayTop10VolumeInFtx(db)
+	// 		fmt.Println("----- biggest gainz 24h -----")
+	// 		displayChangeInFtx(db, 24, 5, "DESC")
+	// 		fmt.Println("----- biggest gainz 1h -----")
+	// 		displayChangeInFtx(db, 1, 5, "DESC")
+	// 		fmt.Println("----- biggest loss 24h -----")
+	// 		displayChangeInFtx(db, 24, 5, "ASC")
+	// 		fmt.Println("----- biggest loss 1h -----")
+	// 		displayChangeInFtx(db, 1, 5, "ASC")
+	// 	})
 
 	c.Start()
 
@@ -184,7 +186,7 @@ func displayTop24HVolumeInBinance(db *sql.DB) {
 	WHERE datetime(round(openTime/1000), 'unixepoch') > datetime('now', '-1 day')
 	GROUP BY name
 	ORDER BY sum(volume) DESC
-	LIMIT 20;
+	LIMIT 10;
 	`
 
 	rows, err := db.Query(testSQL)
