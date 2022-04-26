@@ -83,8 +83,7 @@ func main() {
 	err := godotenv.Load()
 	checkErr(err)
 	TOKEN_API := os.Getenv("TOKEN_API")
-	MY_CHAT_ID := os.Getenv("MY_CHAT_ID")
-	MY_CHAT_ID_INT64, _ := strconv.ParseInt(MY_CHAT_ID, 0, 64)
+	MY_CHAT_ID_INT64, _ := strconv.ParseInt(os.Getenv("MY_CHAT_ID"), 0, 64)
 	tgbotwrapper.SendMessage(TOKEN_API, MY_CHAT_ID_INT64, "starting program!!!")
 
 	fmt.Print("starting program ")
@@ -116,41 +115,49 @@ func main() {
 
 	/* number of symbols = n, k = number of candles to retrieve, X = interval 3m,15m,1h,1d ... */
 	/* binance, createTable and insert n * k rows of X interval */
-	interval := "15m"
-	func() {
-		printCurrentTime()
-		fmt.Println("initializing data from binance")
-		dropTableInDB(db, TABLENAME_BINANCE)
-		createTableBinanceInDB(db)
-		initializeDataInBinance(db, interval, 99) //*** skips last candle becos not closed yet // 153 symbols * 20 candles took 20sec
-		displayTop24HVolumeInBinance(db)          // not accurate becos missing out 1 candle
+	// interval := "15m"
+	// func() {
+	// 	printCurrentTime()
+	// 	fmt.Println("initializing data from binance")
+	// 	dropTableInDB(db, TABLENAME_BINANCE)
+	// 	createTableBinanceInDB(db)
+	// 	initializeDataInBinance(db, interval, 99) //*** skips last candle becos not closed yet // 153 symbols * 20 candles took 20sec
+	// 	displayTop24HVolumeInBinance(db)          // not accurate becos missing out 1 candle
 
-	}()
+	// }()
 
-	/* every X interval, insert new X-interval candle */
-	c.AddFunc("0 0-59/15 * * * *", func() {
-		printCurrentTime()
-		initializeDataInBinance(db, interval, 1) //
-		displayTop24HVolumeInBinance(db)
-	})
+	// /* every X interval, insert new X-interval candle */
+	// c.AddFunc("0 0-59/15 * * * *", func() {
+	// 	printCurrentTime()
+	// 	initializeDataInBinance(db, interval, 1) //
+	// 	displayTop24HVolumeInBinance(db)
+	// })
 
 	/* ftx, every X interval, create table and insert value */
-	// c.AddFunc("0 0-59/5 * * * *",
-	// 	func() {
-	// 		printCurrentTime()
-	// 		dropTableInDB(db, TABLENAME_FTX)
-	// 		createTableFtxInDB(db)
-	// 		initializeDataInFtx(db)
-	// 		displayTop10VolumeInFtx(db)
-	// 		fmt.Println("----- biggest gainz 24h -----")
-	// 		displayChangeInFtx(db, 24, 5, "DESC")
-	// 		fmt.Println("----- biggest gainz 1h -----")
-	// 		displayChangeInFtx(db, 1, 5, "DESC")
-	// 		fmt.Println("----- biggest loss 24h -----")
-	// 		displayChangeInFtx(db, 24, 5, "ASC")
-	// 		fmt.Println("----- biggest loss 1h -----")
-	// 		displayChangeInFtx(db, 1, 5, "ASC")
-	// 	})
+	c.AddFunc("0-59/20 * * * * *",
+		func() {
+			printCurrentTime()
+			dropTableInDB(db, TABLENAME_FTX)
+			createTableFtxInDB(db)
+			initializeDataInFtx(db)
+			// displayTop10VolumeInFtx(db)
+			// fmt.Println("----- biggest gainz 24h -----")
+			// displayChangeInFtx(db, 24, 5, "DESC")
+			// fmt.Println("----- biggest gainz 1h -----")
+			// displayChangeInFtx(db, 1, 5, "DESC")
+			// fmt.Println("----- biggest loss 24h -----")
+			// displayChangeInFtx(db, 24, 5, "ASC")
+			// fmt.Println("----- biggest loss 1h -----")
+			// displayChangeInFtx(db, 1, 5, "ASC")
+
+			var sb strings.Builder
+			top10Vol := displayTop10VolumeInFtx(db)
+			top5Gainer24H := displayChangeInFtx(db, 24, 5, "DESC")
+			sb.WriteString(top10Vol)
+			sb.WriteString(top5Gainer24H)
+			textMessage := sb.String()
+			tgbotwrapper.SendMessage(TOKEN_API, MY_CHAT_ID_INT64, textMessage)
+		})
 
 	c.Start()
 
@@ -328,7 +335,7 @@ func initRequiredFiles() {
 
 /* FTX helper functions below */
 // 2nd param - "order" either "DESC" | "ASC"
-func displayChangeInFtx(db *sql.DB, change int, rowsToDisplay int, order string) {
+func displayChangeInFtx(db *sql.DB, change int, rowsToDisplay int, order string) string {
 	if change != 1 && change != 24 {
 		panic("change needs to be either 1 or 24 for sql statement")
 	}
@@ -344,20 +351,29 @@ func displayChangeInFtx(db *sql.DB, change int, rowsToDisplay int, order string)
 
 	sql := fmt.Sprintf(selectTopGainerSQL, TABLENAME_FTX, change, order, rowsToDisplay)
 
+	var sb strings.Builder
+	columnTitle := fmt.Sprintf("%12s %10s %14s%% %14s%% \n", "name", "last", "1hChange", "24hChange")
+	sb.WriteString(columnTitle)
+
 	rows, err := db.Query(sql)
 	checkErr(err)
-	fmt.Printf("%12s %10s %14s%% %14s%% \n", "name", "last", "1hChange", "24hChange")
+	fmt.Print(columnTitle)
 	for rows.Next() {
 		var name string
 		var last float64
 		var change1h float64
 		var change24h float64
 		rows.Scan(&name, &last, &change1h, &change24h)
+		rowsData := fmt.Sprintf("%12s %10.4f %14.4f%% %14.4f%% \n", name, last, change1h*100, change24h*100)
+		
+		sb.WriteString(rowsData)
 		fmt.Printf("%12s %10.4f %14.4f%% %14.4f%% \n", name, last, change1h*100, change24h*100)
 	}
+
+	return sb.String()
 }
 
-func displayTop10VolumeInFtx(db *sql.DB) {
+func displayTop10VolumeInFtx(db *sql.DB) string {
 	// unformatted
 	selectTop10VolumeSQL := `SELECT name, volume
 		FROM %s
@@ -368,16 +384,27 @@ func displayTop10VolumeInFtx(db *sql.DB) {
 	// formatted
 	sql := fmt.Sprintf(selectTop10VolumeSQL, TABLENAME_FTX)
 
+	var sb strings.Builder
+	header := "----- FTX Top 10 Volume -----\n"
+	columnTitle := fmt.Sprintf("%12s %12s \n", "name", "volume in M")
+	sb.WriteString(header)
+	sb.WriteString(columnTitle)
+
+	fmt.Print(header)
+	fmt.Print(columnTitle)
 	rows, err := db.Query(sql)
 	checkErr(err)
-	fmt.Println("----- FTX Top 10 Volume -----")
-	fmt.Printf("%12s %12s \n", "name", "volume in M")
 	for rows.Next() {
 		var name string
 		var volumeUsd24h float64
 		rows.Scan(&name, &volumeUsd24h)
-		fmt.Printf("%12s %12.2fM \n", name, volumeUsd24h/MILLION)
+		rowsData := fmt.Sprintf("%12s %12.2fM \n", name, volumeUsd24h/MILLION)
+
+		sb.WriteString(rowsData)
+		fmt.Print(rowsData)
 	}
+
+	return sb.String()
 }
 
 func displayAllRowsInFtx(db *sql.DB) {
