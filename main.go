@@ -9,12 +9,16 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/mattn/go-sqlite3"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/robfig/cron/v3"
+
+	"project/coins/tgbotwrapper"
 )
 
 /*
@@ -75,6 +79,14 @@ var libNames = []entrypoint{
 }
 
 func main() {
+	/* loading env */
+	err := godotenv.Load()
+	checkErr(err)
+	TOKEN_API := os.Getenv("TOKEN_API")
+	MY_CHAT_ID := os.Getenv("MY_CHAT_ID")
+	MY_CHAT_ID_INT64, _ := strconv.ParseInt(MY_CHAT_ID, 0, 64)
+	tgbotwrapper.SendMessage(TOKEN_API, MY_CHAT_ID_INT64, "starting program!!!")
+
 	fmt.Print("starting program ")
 	printCurrentTime()
 	initRequiredFiles()
