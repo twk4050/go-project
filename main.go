@@ -73,8 +73,9 @@ const MILLION = 1_000_000
 const FTX_ENDPOINT = "https://ftx.com/api/futures"
 
 var libNames = []entrypoint{
-	{"libgo-sqlite3-extension-functions.so", "sqlite3_extension_init"},
-	{"libgo-sqlite3-extension-functions.dylib", "sqlite3_extension_init"},
+	// .so .dylib .dll for unix / mac / windows
+	{"./sql-extensions/libsqlitefunctions.so", "sqlite3_extension_init"},
+	{"./sql-extensions/libsqlitefunctions.dylib", "sqlite3_extension_init"},
 	{"./sql-extensions/libsqlitefunctions.dll", "sqlite3_extension_init"}, // renamed to custom dll file
 }
 
@@ -134,7 +135,7 @@ func main() {
 	// })
 
 	/* ftx, every X interval, create table and insert value */
-	c.AddFunc("0-59/20 * * * * *",
+	c.AddFunc("0 0-59/15 * * * *",
 		func() {
 			printCurrentTime()
 			dropTableInDB(db, TABLENAME_FTX)
