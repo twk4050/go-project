@@ -16,7 +16,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/robfig/cron/v3"
 
-	_ "project/coins/sqlite3extension"
 	"project/coins/tgbotwrapper"
 )
 
