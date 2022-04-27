@@ -74,14 +74,14 @@ func main() {
 	checkErr(err)
 	TOKEN_API := os.Getenv("TOKEN_API")
 	MY_CHAT_ID_INT64, _ := strconv.ParseInt(os.Getenv("MY_CHAT_ID"), 0, 64)
-	tgbotwrapper.SendMessage(TOKEN_API, MY_CHAT_ID_INT64, "starting program!!!")
+	tgbotwrapper.SendMessage(TOKEN_API, MY_CHAT_ID_INT64, "starting program from computer!!!")
 
 	fmt.Print("starting program ")
 	printCurrentTime()
 	initRequiredFiles()
 
 	/* start a connection, note the ...-extension-functions */
-	db, err := sql.Open("sqlite3-extension-functions", dbName)
+	db, err := sql.Open("sqlite3", dbName)
 	checkErr(err)
 	defer db.Close()
 
@@ -111,7 +111,7 @@ func main() {
 	// })
 
 	/* ftx, every X interval, create table and insert value */
-	c.AddFunc("0 0-59/1 * * * *",
+	c.AddFunc("0-59/15 0-59/1 * * * *",
 		func() {
 			printCurrentTime()
 			dropTableInDB(db, TABLENAME_FTX)

@@ -5,6 +5,7 @@ foo.db-journal
 # random file
 sql
 sql-extensions/
+sqlite3extension/
 binanceFutures.txt
 
 # private files
