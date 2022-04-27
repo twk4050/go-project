@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -14,10 +13,10 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/mattn/go-sqlite3"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/robfig/cron/v3"
 
+	_ "project/coins/sqlite3extension"
 	"project/coins/tgbotwrapper"
 )
 
@@ -58,11 +57,6 @@ type FTX_Futures struct {
 type Binance_Futures_KLine_Response []Candlesticks
 type Candlesticks [12]interface{} // OpenTime, Open, High, Low, Close, Volume, CloseTime, QuoteAssetVolume, NumberOfTrades = c[0] ... c[7]
 
-type entrypoint struct {
-	lib  string
-	proc string
-}
-
 const dbName = "foo.db"
 const TABLENAME_FTX = "ftx"
 const TABLENAME_BINANCE = "binance"
@@ -72,12 +66,7 @@ const MILLION = 1_000_000
 
 const FTX_ENDPOINT = "https://ftx.com/api/futures"
 
-var libNames = []entrypoint{
-	// .so .dylib .dll for unix / mac / windows
-	{"./sql-extensions/libsqlitefunctions.so", "sqlite3_extension_init"},
-	{"./sql-extensions/libsqlitefunctions.dylib", "sqlite3_extension_init"},
-	{"./sql-extensions/libsqlitefunctions.dll", "sqlite3_extension_init"}, // renamed to custom dll file
-}
+
 
 func main() {
 	/* loading env */
@@ -91,20 +80,7 @@ func main() {
 	printCurrentTime()
 	initRequiredFiles()
 
-	/* extend driver */
-	sql.Register("sqlite3-extension-functions",
-		&sqlite3.SQLiteDriver{
-			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-				for _, v := range libNames {
-					if err := conn.LoadExtension(v.lib, v.proc); err == nil {
-						return nil
-					}
-				}
-				return errors.New("libgo-sqlite3-extension-functions not found")
-			},
-		})
-
-	/* start a connection */
+	/* start a connection, note the ...-extension-functions */
 	db, err := sql.Open("sqlite3-extension-functions", dbName)
 	checkErr(err)
 	defer db.Close()
@@ -128,36 +104,36 @@ func main() {
 	// }()
 
 	// /* every X interval, insert new X-interval candle */
-	// c.AddFunc("0 0-59/15 * * * *", func() {
+	// c.AddFunc("1 0-59/15 * * * *", func() {
 	// 	printCurrentTime()
 	// 	initializeDataInBinance(db, interval, 1) //
 	// 	displayTop24HVolumeInBinance(db)
 	// })
 
 	/* ftx, every X interval, create table and insert value */
-	c.AddFunc("0 0-59/15 * * * *",
+	c.AddFunc("0 0-59/1 * * * *",
 		func() {
 			printCurrentTime()
 			dropTableInDB(db, TABLENAME_FTX)
 			createTableFtxInDB(db)
 			initializeDataInFtx(db)
-			// displayTop10VolumeInFtx(db)
-			// fmt.Println("----- biggest gainz 24h -----")
-			// displayChangeInFtx(db, 24, 5, "DESC")
-			// fmt.Println("----- biggest gainz 1h -----")
-			// displayChangeInFtx(db, 1, 5, "DESC")
-			// fmt.Println("----- biggest loss 24h -----")
-			// displayChangeInFtx(db, 24, 5, "ASC")
-			// fmt.Println("----- biggest loss 1h -----")
-			// displayChangeInFtx(db, 1, 5, "ASC")
+			displayTop10VolumeInFtx(db)
+			fmt.Println("----- biggest gainz 24h -----")
+			displayChangeInFtx(db, 24, 5, "DESC")
+			fmt.Println("----- biggest gainz 1h -----")
+			displayChangeInFtx(db, 1, 5, "DESC")
+			fmt.Println("----- biggest loss 24h -----")
+			displayChangeInFtx(db, 24, 5, "ASC")
+			fmt.Println("----- biggest loss 1h -----")
+			displayChangeInFtx(db, 1, 5, "ASC")
 
-			var sb strings.Builder
-			top10Vol := displayTop10VolumeInFtx(db)
-			top5Gainer24H := displayChangeInFtx(db, 24, 5, "DESC")
-			sb.WriteString(top10Vol)
-			sb.WriteString(top5Gainer24H)
-			textMessage := sb.String()
-			tgbotwrapper.SendMessage(TOKEN_API, MY_CHAT_ID_INT64, textMessage)
+			// var sb strings.Builder
+			// top10Vol := displayTop10VolumeInFtx(db)
+			// top5Gainer24H := displayChangeInFtx(db, 24, 5, "DESC")
+			// sb.WriteString(top10Vol)
+			// sb.WriteString(top5Gainer24H)
+			// textMessage := sb.String()
+			// tgbotwrapper.SendMessage(TOKEN_API, MY_CHAT_ID_INT64, textMessage)
 		})
 
 	c.Start()
