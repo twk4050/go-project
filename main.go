@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+
 	"strconv"
 	"strings"
 	"time"
@@ -73,7 +74,7 @@ func main() {
 	checkErr(err)
 	TOKEN_API := os.Getenv("TOKEN_API")
 	MY_CHAT_ID_INT64, _ := strconv.ParseInt(os.Getenv("MY_CHAT_ID"), 0, 64)
-	tgbotwrapper.SendMessage(TOKEN_API, MY_CHAT_ID_INT64, "starting program from computer!!!")
+	tgbotwrapper.SendMessage(TOKEN_API, MY_CHAT_ID_INT64, "starting program from computer!!!", false)
 
 	fmt.Print("starting program ")
 	printCurrentTime()
@@ -97,7 +98,7 @@ func main() {
 	// 	fmt.Println("initializing data from binance")
 	// 	dropTableInDB(db, TABLENAME_BINANCE)
 	// 	createTableBinanceInDB(db)
-	// 	initializeDataInBinance(db, interval, 99) //*** skips last candle becos not closed yet // 153 symbols * 20 candles took 20sec
+	// 	initializeDataInBinance(db, interval, 10) //*** skips last candle becos not closed yet // 153 symbols * 20 candles took 20sec
 	// 	displayTop24HVolumeInBinance(db)          // not accurate becos missing out 1 candle
 
 	// }()
@@ -116,23 +117,23 @@ func main() {
 			dropTableInDB(db, TABLENAME_FTX)
 			createTableFtxInDB(db)
 			initializeDataInFtx(db)
-			displayTop10VolumeInFtx(db)
-			fmt.Println("----- biggest gainz 24h -----")
-			displayChangeInFtx(db, 24, 5, "DESC")
-			fmt.Println("----- biggest gainz 1h -----")
-			displayChangeInFtx(db, 1, 5, "DESC")
-			fmt.Println("----- biggest loss 24h -----")
-			displayChangeInFtx(db, 24, 5, "ASC")
-			fmt.Println("----- biggest loss 1h -----")
-			displayChangeInFtx(db, 1, 5, "ASC")
+			// displayTop10VolumeInFtx(db)
+			// fmt.Println("----- biggest gainz 24h -----")
+			// displayChangeInFtx(db, 24, 5, "DESC")
+			// fmt.Println("----- biggest gainz 1h -----")
+			// displayChangeInFtx(db, 1, 5, "DESC")
+			// fmt.Println("----- biggest loss 24h -----")
+			// displayChangeInFtx(db, 24, 5, "ASC")
+			// fmt.Println("----- biggest loss 1h -----")
+			// displayChangeInFtx(db, 1, 5, "ASC")
 
-			// var sb strings.Builder
-			// top10Vol := displayTop10VolumeInFtx(db)
+			var sb strings.Builder
+			top10Vol := displayTop10VolumeInFtx(db)
 			// top5Gainer24H := displayChangeInFtx(db, 24, 5, "DESC")
-			// sb.WriteString(top10Vol)
+			sb.WriteString(top10Vol)
 			// sb.WriteString(top5Gainer24H)
-			// textMessage := sb.String()
-			// tgbotwrapper.SendMessage(TOKEN_API, MY_CHAT_ID_INT64, textMessage)
+			textMessage := sb.String()
+			tgbotwrapper.SendMessage(TOKEN_API, MY_CHAT_ID_INT64, textMessage, true)
 		})
 
 	c.Start()
