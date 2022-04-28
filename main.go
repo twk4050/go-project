@@ -73,8 +73,8 @@ func main() {
 	err := godotenv.Load()
 	checkErr(err)
 	TOKEN_API := os.Getenv("TOKEN_API")
-	MY_CHAT_ID_INT64, _ := strconv.ParseInt(os.Getenv("MY_CHAT_ID"), 0, 64)
-	tgbotwrapper.SendMessage(TOKEN_API, MY_CHAT_ID_INT64, "starting program from computer!!!", false)
+	CHAT_ID_INT64, _ := strconv.ParseInt(os.Getenv("CHAT_ID"), 0, 64)
+	tgbotwrapper.SendMessage(TOKEN_API, CHAT_ID_INT64, "starting program from computer!!!", false)
 
 	fmt.Print("starting program ")
 	printCurrentTime()
@@ -128,12 +128,22 @@ func main() {
 			// displayChangeInFtx(db, 1, 5, "ASC")
 
 			var sb strings.Builder
+			topVolumeHeader := "FTX Top 10 Volume\n"
+			topVolumeColumnTitle := fmt.Sprintf("%12s %12s \n", "name", "volume in M")
 			top10Vol := displayTop10VolumeInFtx(db)
-			// top5Gainer24H := displayChangeInFtx(db, 24, 5, "DESC")
+			sb.WriteString(topVolumeHeader)
+			sb.WriteString(topVolumeColumnTitle)
 			sb.WriteString(top10Vol)
-			// sb.WriteString(top5Gainer24H)
+		
+			topChangeHeader := "FTX Top 5 gainer 24H\n"
+			topChangeColumnTitle := fmt.Sprintf("%12s %10s %14s%% %14s%% \n", "name", "last", "1hChange", "24hChange")
+			top5Gainer24H := displayChangeInFtx(db, 24, 5, "DESC")
+			sb.WriteString(topChangeHeader)
+			sb.WriteString(topChangeColumnTitle)
+			sb.WriteString(top5Gainer24H)
+
 			textMessage := sb.String()
-			tgbotwrapper.SendMessage(TOKEN_API, MY_CHAT_ID_INT64, textMessage, true)
+			tgbotwrapper.SendMessage(TOKEN_API, CHAT_ID_INT64, textMessage, true)
 		})
 
 	c.Start()
@@ -329,12 +339,9 @@ func displayChangeInFtx(db *sql.DB, change int, rowsToDisplay int, order string)
 	sql := fmt.Sprintf(selectTopGainerSQL, TABLENAME_FTX, change, order, rowsToDisplay)
 
 	var sb strings.Builder
-	columnTitle := fmt.Sprintf("%12s %10s %14s%% %14s%% \n", "name", "last", "1hChange", "24hChange")
-	sb.WriteString(columnTitle)
 
 	rows, err := db.Query(sql)
 	checkErr(err)
-	fmt.Print(columnTitle)
 	for rows.Next() {
 		var name string
 		var last float64
@@ -362,13 +369,7 @@ func displayTop10VolumeInFtx(db *sql.DB) string {
 	sql := fmt.Sprintf(selectTop10VolumeSQL, TABLENAME_FTX)
 
 	var sb strings.Builder
-	header := "----- FTX Top 10 Volume -----\n"
-	columnTitle := fmt.Sprintf("%12s %12s \n", "name", "volume in M")
-	sb.WriteString(header)
-	sb.WriteString(columnTitle)
 
-	fmt.Print(header)
-	fmt.Print(columnTitle)
 	rows, err := db.Query(sql)
 	checkErr(err)
 	for rows.Next() {
