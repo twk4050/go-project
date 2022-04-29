@@ -35,3 +35,8 @@ c := cron.New(cron.WithParser(cron.NewParser(
 ```
 
 - "0-59/15 0-59/1 \* \* \* \*" equivalent to every 15second
+
+# useful
+
+- [sqlite create custom func/aggr](https://android.googlesource.com/platform/external/cherry/+/d2e26b4d864ec2a6757e7f1174e464949ca5bf73/third_party/go-sqlite3/_example/custom_func/main.go)
+- [mattn go-sqlite3](https://pkg.go.dev/github.com/mattn/go-sqlite3?utm_source=godoc)

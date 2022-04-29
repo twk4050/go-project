@@ -22,5 +22,5 @@ func SendMessage(token string, chat_id int64, textMessage string, markdown bool)
 }
 
 func formatToMarkdownCodeBlock(s string) string {
-	return "```" + s + "```"
+	return "``` " + s + " ```"
 }
