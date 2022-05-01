@@ -98,10 +98,9 @@ func main() {
 		createTableBinanceInDB(db)
 		initializeDataInBinance(db, interval, 99) //*** skips last candle becos not closed yet // 153 symbols * 20 candles took 20sec
 
-		s := displayTop24HVolumeInBinance(db) // not accurate yet becos missing out 1 candle (latest candle)
-
-		textMessage := s
-		tgbotwrapper.SendMessage(TOKEN_API, CHAT_ID_INT64, textMessage, true)
+		// s := displayTop24HVolumeInBinance(db) // not accurate yet becos missing out 1 candle (latest candle)
+		// textMessage := s
+		// tgbotwrapper.SendMessage(TOKEN_API, CHAT_ID_INT64, textMessage, true)
 		// testQuerys(db)
 
 		/* every X interval, insert new X-interval candle */
@@ -195,15 +194,20 @@ func testQuerys(db *sql.DB) string {
 func displayTop24HVolumeInBinance(db *sql.DB) string {
 
 	testSQL := `
-	SELECT name, sum(volume) as sum_volume from binance
-	WHERE datetime(round(openTime/1000), 'unixepoch') > datetime('now', '-1 day')
-	GROUP BY name
-	ORDER BY sum(volume) DESC
+	SELECT a.name, sum(a.volume) as sum_volume, b.close
+    FROM binance as a
+    INNER JOIN (
+        SELECT name, close, max(closeTime) as closeTime from binance
+        GROUP BY name
+    ) as b ON a.name=b.name
+	WHERE datetime(round(a.closeTime/1000), 'unixepoch') > datetime('now', '-1 day')
+	GROUP BY a.name
+	ORDER BY sum(a.volume) DESC
 	LIMIT 10;
 	`
 
 	topVolumeHeader := "Binance Top 10 Volume\n"
-	topVolumeColumnTitle := fmt.Sprintf("%12s %12s \n", "name", "volume in M")
+	topVolumeColumnTitle := fmt.Sprintf("%10s %12s %12s \n", "name", "volume in M", "close")
 
 	var sb strings.Builder
 	sb.WriteString(topVolumeHeader)
@@ -215,8 +219,9 @@ func displayTop24HVolumeInBinance(db *sql.DB) string {
 	for rows.Next() {
 		var name string
 		var sum_volume float64
-		rows.Scan(&name, &sum_volume)
-		rowsData := fmt.Sprintf("%12s %12.4f \n", name, sum_volume/MILLION)
+		var close float64
+		rows.Scan(&name, &sum_volume, &close)
+		rowsData := fmt.Sprintf("%10s %12.4f %12.4f \n", name, sum_volume/MILLION, close)
 
 		sb.WriteString(rowsData)
 	}
