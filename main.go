@@ -107,9 +107,13 @@ func main() {
 		c.AddFunc("0 0-59/15 * * * *", func() {
 			printCurrentTime()
 			initializeDataInBinance(db, interval, 1) //
-			s := displayTop24HVolumeInBinance(db)
+			top10Vol := displayTop24HVolumeInBinance(db)
+			volExceed2sd := testQuerys(db)
 
-			textMessage := s
+			var sb strings.Builder
+			sb.WriteString(top10Vol)
+			sb.WriteString(volExceed2sd)
+			textMessage := sb.String()
 			tgbotwrapper.SendMessage(TOKEN_API, CHAT_ID_INT64, textMessage, true)
 		})
 	}()
@@ -144,7 +148,6 @@ func main() {
 
 // not usable yet
 func testQuerys(db *sql.DB) string {
-	// id, a.name, a.volume, b.avg_vol, a.openTime
 	testSQL := `SELECT a.name, a.volume, b.avg_vol, b.stddev_vol
 	FROM binance as a
 	INNER JOIN (SELECT name, AVG(volume) as avg_vol, stddev(volume) as stddev_vol
@@ -154,7 +157,8 @@ func testQuerys(db *sql.DB) string {
 			 SELECT MAX(openTime) FROM binance
 			 GROUP BY name
 		  )
-		  AND 1=1
+		  AND 
+		  	datetime(round(closeTime/1000), 'unixepoch') > datetime('now', '-150 minute')
 	   GROUP BY name
 	) as b ON a.name=b.name
 	WHERE
@@ -165,23 +169,23 @@ func testQuerys(db *sql.DB) string {
 	   AND
 		  1=1
 	   AND
-		  1=1
+		  a.volume > ( b.avg_vol + 2*b.stddev_vol )
 	;`
 
 	var sb strings.Builder
-	// columnTitle := fmt.Sprintf("%10s %15s %15s %15s\n", "name", "latestC_vol", "avg_vol_pastXcandle", "n*sd")
-	// sb.WriteString(columnTitle)
+	columnTitle := fmt.Sprintf("%10s %12s %12s %12s\n", "name", "c_vol in M", "avg_vol in M", "sd in M")
+	sb.WriteString(columnTitle)
 
 	rows, err := db.Query(testSQL)
 	checkErr(err)
-	defer rows.Close()
+	defer rows.Close() 
 	for rows.Next() {
 		var name string
-		var vol float64
+		var c_vol float64
 		var avg_vol float64
 		var stddev_vol float64
-		rows.Scan(&name, &vol, &avg_vol, &stddev_vol)
-		rowsData := fmt.Sprintf("%10s %15.4f %15.4f %15.4f \n", name, vol, avg_vol, stddev_vol)
+		rows.Scan(&name, &c_vol, &avg_vol, &stddev_vol)
+		rowsData := fmt.Sprintf("%10s %12.4f %12.4f %12.4f \n", name, c_vol/MILLION, avg_vol/MILLION, stddev_vol/MILLION)
 
 		sb.WriteString(rowsData)
 	}
