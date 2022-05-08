@@ -24,16 +24,10 @@ import (
 
 /*
 	some concept to understand
-	- Database > Table > Rows
-	- always prepare(SQL) -> execute
-	- databytes unmarshal into corresponding struct type with `json` struct tags
-	- sqlite accepts all datatype during insertion (able to insert string into REAL) (sqlite auto convert if able)
-	- different volume meaning
-	-- ftx: volumeUsd24h -> (sql) ftx.volume
-	-- binance: volume vs QuoteAssetVolume , quoteAssetVolume -> (sql) binance.volume (response type string auto converted to REAL in sql)
-	https://binance-docs.github.io/apidocs/futures/en/#change-log
 	- insert 153 symbol * n candlesticks into table 'binance'
-	binance docs Kline interval, m h d w M, 1m 3m 5m 15m 30m 1h 2h 4h 6h 8h 12h 1d 3d 1w 1M
+	- binance docs Kline interval, m h d w M, 1m 3m 5m 15m 30m 1h 2h 4h 6h 8h 12h 1d 3d 1w 1M
+	- initializing 155 symbol * 250 candles takes 1m20sec
+	- every 3minute, add new candle, currently takes 13seconds
 */
 
 type FTX_Response struct {
@@ -92,54 +86,56 @@ func main() {
 		initRequiredFiles()
 
 		/* binance, createTable and insert n * k rows of X interval // n=trading-pairs, k=number of candles to retrieve, X=interval 3m,15m,1h,1d*/
-		interval := "15m"
+		interval := "3m"
 		fmt.Println("initializing data from binance")
 		dropTableInDB(db, TABLENAME_BINANCE)
 		createTableBinanceInDB(db)
-		initializeDataInBinance(db, interval, 99) //*** skips last candle becos not closed yet // 153 symbols * 20 candles took 20sec
-
-		// s := displayTop24HVolumeInBinance(db) // not accurate yet becos missing out 1 candle (latest candle)
-		// textMessage := s
-		// tgbotwrapper.SendMessage(TOKEN_API, CHAT_ID_INT64, textMessage, true)
-		// testQuerys(db)
+		initializeDataInBinance(db, interval, 498) //*** skips last candle becos not closed yet // 153 symbols * 20 candles took 20sec
 
 		/* every X interval, insert new X-interval candle */
-		c.AddFunc("0 0-59/15 * * * *", func() {
-			printCurrentTime()
+		// not sure if time on local machine is ahead of binance servers, can only pull CLOSED candle 5second later
+		c.AddFunc("5 0-59/3 * * * *", func() {
 			initializeDataInBinance(db, interval, 1) //
-			top10Vol := displayTop24HVolumeInBinance(db)
-			volExceed2sd := testQuerys(db)
 
+			coinsWithUnusualVolume := testQuerys(db)
+			
 			var sb strings.Builder
-			sb.WriteString(top10Vol)
-			sb.WriteString(volExceed2sd)
+			sb.WriteString(coinsWithUnusualVolume)
+
 			textMessage := sb.String()
+			tgbotwrapper.SendMessage(TOKEN_API, CHAT_ID_INT64, textMessage, true)
+		})
+
+		c.AddFunc("59 59 * * * *", func ()  {
+			s := displayTop24HVolumeInBinance(db)
+
+			textMessage := s
 			tgbotwrapper.SendMessage(TOKEN_API, CHAT_ID_INT64, textMessage, true)
 		})
 	}()
 
 	/* ftx, every X interval, create table and insert value */
-	c.AddFunc("59 59 * * * *",
-		func() {
-			printCurrentTime()
-			dropTableInDB(db, TABLENAME_FTX)
-			createTableFtxInDB(db)
-			initializeDataInFtx(db)
+	// c.AddFunc("59 59 * * * *",
+	// 	func() {
+	// 		printCurrentTime()
+	// 		dropTableInDB(db, TABLENAME_FTX)
+	// 		createTableFtxInDB(db)
+	// 		initializeDataInFtx(db)
 
-			top10Vol := displayTop10VolumeInFtx(db)
-			// displayChangeInFtx(db, 24, 5, "DESC")  // top5 24H gainer
-			// displayChangeInFtx(db, 24, 5, "ASC")
-			top5Gainer1H := displayChangeInFtx(db, 1, 5, "DESC") // top5 1H gainer
-			top5Loser1H := displayChangeInFtx(db, 1, 5, "ASC")
+	// 		top10Vol := displayTop10VolumeInFtx(db)
+	// 		// displayChangeInFtx(db, 24, 5, "DESC")  // top5 24H gainer
+	// 		// displayChangeInFtx(db, 24, 5, "ASC")
+	// 		top5Gainer1H := displayChangeInFtx(db, 1, 5, "DESC") // top5 1H gainer
+	// 		top5Loser1H := displayChangeInFtx(db, 1, 5, "ASC")
 
-			var sb strings.Builder
-			sb.WriteString(top10Vol)
-			sb.WriteString(top5Gainer1H)
-			sb.WriteString(top5Loser1H)
+	// 		var sb strings.Builder
+	// 		sb.WriteString(top10Vol)
+	// 		sb.WriteString(top5Gainer1H)
+	// 		sb.WriteString(top5Loser1H)
 
-			textMessage := sb.String()
-			tgbotwrapper.SendMessage(TOKEN_API, CHAT_ID_INT64, textMessage, true)
-		})
+	// 		textMessage := sb.String()
+	// 		tgbotwrapper.SendMessage(TOKEN_API, CHAT_ID_INT64, textMessage, true)
+	// 	})
 
 	c.Start()
 
@@ -148,7 +144,7 @@ func main() {
 
 // not usable yet
 func testQuerys(db *sql.DB) string {
-	testSQL := `SELECT a.name, a.volume, b.avg_vol, b.stddev_vol
+	testSQL := `SELECT a.name, a.volume, b.avg_vol
 	FROM binance as a
 	INNER JOIN (SELECT name, AVG(volume) as avg_vol, stddev(volume) as stddev_vol
 	   FROM binance
@@ -169,11 +165,14 @@ func testQuerys(db *sql.DB) string {
 	   AND
 		  1=1
 	   AND
-		  a.volume > ( b.avg_vol + 2*b.stddev_vol )
+		  a.volume > ( b.avg_vol + 3*b.stddev_vol )
 	;`
 
+	unusualVolumeHeader := "Binance Unusual Volume 3*sd\n"
+	columnTitle := fmt.Sprintf("%10s %15s %15s \n", "name", "3min_vol(M)", "avg50_vol(M)") // , "sd in M")
+
 	var sb strings.Builder
-	columnTitle := fmt.Sprintf("%10s %12s %12s %12s\n", "name", "c_vol in M", "avg_vol in M", "sd in M")
+	sb.WriteString(unusualVolumeHeader)
 	sb.WriteString(columnTitle)
 
 	rows, err := db.Query(testSQL)
@@ -181,11 +180,11 @@ func testQuerys(db *sql.DB) string {
 	defer rows.Close() 
 	for rows.Next() {
 		var name string
-		var c_vol float64
-		var avg_vol float64
-		var stddev_vol float64
-		rows.Scan(&name, &c_vol, &avg_vol, &stddev_vol)
-		rowsData := fmt.Sprintf("%10s %12.4f %12.4f %12.4f \n", name, c_vol/MILLION, avg_vol/MILLION, stddev_vol/MILLION)
+		var volume float64
+		var avg50_vol float64
+
+		rows.Scan(&name, &volume, &avg50_vol)
+		rowsData := fmt.Sprintf("%10s %14.4f %14.4f \n", name, volume/MILLION, avg50_vol/MILLION)
 
 		sb.WriteString(rowsData)
 	}
@@ -263,14 +262,13 @@ func initializeDataInBinance(db *sql.DB, interval string, limit int) {
 		formatted_endpoint := fmt.Sprintf(endpoint, symbol, interval, limit)
 		dataBytes, err := httpGetUrlRequestAndIORead(formatted_endpoint)
 		checkErr(err)
-
 		var kline_response Binance_Futures_KLine_Response
 		json.Unmarshal(dataBytes, &kline_response)
 
 		// c = candlesticks
 		lastIndex := len(kline_response) - 1
 		for i, c := range kline_response {
-			// last c not closed yet not a complete candle
+			// last c is not a complete candle, thus skipped
 			if i == lastIndex {
 				continue
 			}
